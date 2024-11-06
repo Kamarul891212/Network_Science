@@ -1,424 +1,344 @@
-# STQD6324 Data Management
+# NETWORK SCIENCE #
 
-# Assignment 4
+# Rapid Rail Network #
 
-# MovieLens 100k Exploratory with Cassandra and Spark2
+## Introduction ##
 
-## Introduction
+For the purpose of network analysis under the Network Science course, the dataset of **Rapid Rail Explorer** will be used. This dataset is owned by Prasarana Malaysia. Prasarana is the owner-operator of the country's rail services, including LRT networks, KL monorail and the MRT lines. In addition to that, they are also the owner-operator for the stage bus services in Kuala Lumpur, Selangor, Penang and Pahang. All these comprise what is commonly known as Rapid Rail and Rapid Bus systems. This dataset provides granular ridership data between Rapid Rail stations, including LRT networks, KL monorail and MRT lines. Analyzing passenger flows between stations can reveal patterns in public transportation usage.
 
-The analysis use the 'u.user' file from the MovieLens 100k Dataset (ml-100k.zip) with Python script to execute Cassandra Query Language (CQL) and Spark2 Structured Query Language (SQL) to get the following answer:
+This dataset can be acquired through url https://data.gov.my/dashboard/rapid-explorer. Though, the dataset must be retrieve programmatically via the API.
 
-+ The average rating for each movie.
-+ The top ten movies with the highest average ratings.
-+ The users that rated at least 50 movies and their favourite movie genres.
-+ All the users with age that is less than 20 years old.
-+ All the users that have the occupation "scientist" and their age is between 30 and 40 years old.
+## Data Exploratory ##
 
-The Python script include the following elements:
-
-+ Python libraries used to execute Spark2 and Cassandra elements.
-+ Functions to parse the u.user file into HDFS.
-+ Functions to load, read and create Resilient Distributed Dataset (RDD) objects.
-+ Functions to convert the RDD objects into DataFrame.
-+ Functions to write the DataFrame into the Keyspace database created in Cassandra.
-+ Functions to read the table back from Cassandra into a new DataFrame.
-
-# Data Exploratory
-
-## Dataset - MovieLens 100k
-
-The MovieLens 100k dataset is a popular dataset used in the field of recommender systems and collaborative filtering research. It consists of 100,000 ratings from 943 users on 1,682 movies, collected by the GroupLens Research Project at the University of Minnesota. Each user has rated at least 20 movies. The dataset includes user demographic information such as age, gender and occupation, as well as movie information including titles, genres and release dates. It is widely used for benchmarking and developing recommendation algorithms due to its manageable size and well-structured data.
-
-### u.data     
-
-+ The full u data set, 100,000 ratings by 943 users on 1,682 items. Each user has rated at least 20 movies. Users and items are numbered consecutively from 1. The data is randomly ordered. This is a tab separated list of **user id | item id | rating | timestamp.** The time stamps are unix seconds since 1/1/1970 UTC.
-              
-### u.item
-
-+ Information about the items (movies); this is a tab separated list of **movie id | movie title | release date | video release date | IMDb URL | unknown | Action | Adventure | Animation | Children's | Comedy | Crime | Documentary | Drama | Fantasy |    Film-Noir | Horror | Musical | Mystery | Romance | Sci-Fi | Thriller | War | Western |** The last 19 fields are the genres, a 1 indicates the movie is of that genre, a 0 indicates it is not; movies can be in several genres at once. The movie ids are the ones used in the u.data data set.
-              
-### u.user
-
-+ Demographic information about the users; this is a tab separated list of **user id | age | gender | occupation | zip code**  The user ids are the ones used in the u.data data set.
-
-## Code in Cassandra Query Language (CQL)
+The Rapid Rail Explorer data is accessible through the **GTFS Statis API** which provides standardized public transportation schedules and geographic information. The following is the code to retrieve the data using API:
 
 ```
-cqlsh> USE movielens;
-cqlsh:movielens> CREATE TABLE IF NOT EXISTS names (
-             ... movie_id int,
-             ... title text,
-             ... release_date text,
-             ... video_release_date text,
-             ... url text,
-             ... unknown int,
-             ... action int,
-             ... adventure int,
-             ... animation int,
-             ... children int,
-             ... comedy int,
-             ... crime int,
-             ... documentary int,
-             ... drama int,
-             ... fantasy int,
-             ... film_noir int,
-             ... horror int,
-             ... musical int,
-             ... mystery int,
-             ... romance int,
-             ... sci_fi int,
-             ... thriller int,
-             ... war int,
-             ... western int,
-             ... PRIMARY KEY (movie_id)
-             ... );
-cqlsh:movielens> CREATE TABLE IF NOT EXISTS ratings (
-             ... user_id int,
-             ... movie_id int,
-             ... rating int,
-             ... time int,
-             ... PRIMARY KEY (user_id, movie_id)
-             ... );
-cqlsh:movielens> CREATE TABLE IF NOT EXISTS users (
-             ... user_id int,
-             ... age int,
-             ... gender text,
-             ... occupation text,
-             ... zip text,
-             ... PRIMARY KEY (user_id)
-             ... );
-cqlsh:movielens> exit
+import requests
+import pandas as pd
+import zipfile
+import io
+import os
+
+# define the API endpoint
+api_url = "https://api.data.gov.my/gtfs-static/prasarana?category=rapid-rail-kl"
+
+# request to the API
+response = requests.get(api_url)
+
+# check if the request was successful
+if response.status_code == 200:
+    # load the content into BytesIO object
+    z = zipfile.ZipFile(io.BytesIO(response.content))
+    # extract all files into current directory
+    z.extractall()
+    print("Files extracted successfully.")
+    # load specific GTFS files into pandas DataFrames
+    stops_df = pd.read_csv('stops.txt')
+    trips_df = pd.read_csv('trips.txt')
+    stop_times_df = pd.read_csv('stop_times.txt')
+    routes_df = pd.read_csv('routes.txt')
+    # save each DataFrame to a csv file
+    stops_df.to_csv("stops.csv", index = False)
+    trips_df.to_csv("trips.csv", index = False)
+    stop_times_df.to_csv("stop_times.csv", index = False)
+    routes_df.to_csv("routes.csv", index = False)
+    print("Data successfully saved to CSV files.")
+else:
+    print(f"Failed to retrieve data. Status code: {response.status_code}") 
 ```
 
-## Writing Spark Output into Cassandra
+There will be a set of files extracted from the API. Then all those dataset need to be combined as follows:
 
 ```
-vi Cassandra_Spark_Movielens.py
+# load the extracted csv files
+stops_df = pd.read_csv('stops.csv')
+trips_df = pd.read_csv('trips.csv')
+stop_times_df = pd.read_csv('stop_times.csv')
+routes_df = pd.read_csv('routes.csv')
+
+# merge stop_times with stops based on stop_id
+stops_combined = pd.merge(stop_times_df, stops_df, on = 'stop_id', how = 'left')
+
+# merge the result with trips based on trip_id
+trips_combined = pd.merge(stops_combined, trips_df, on = 'trip_id', how = 'left')
+
+# merge the result with routes based on route_id
+final_combined_df = pd.merge(trips_combined, routes_df, on = 'route_id', how = 'left')
+
+# save the final combined DataFrame to a csv file
+final_combined_df.to_csv('combined_rapid_rail_data.csv', index = False)
+
+print("All csv files successfully combined into 'combined_rapid_rail_data.csv'")
 ```
 
+All csv files successfully combined into 'combined_rapid_rail_data.csv'
+
+### 1. Selecting a relevant columns for network analysis ###
+
+After combining all the dataset, there are a **total of 30 columns**. The prepare the dataset for network analysis, the data should be cleaned and transformed to contruct a meaningful relationship between stations to identify the vertices and edges for the network system. The columns to be selected are **trip_id, stop_id, stop_name and stop_sequence**.The selected columns will then be saved as new dataset called **network_analysis_data.csv**. The code to construct the relevant columns are as follows:
+
 ```
-from pyspark.sql import SparkSession
-from pyspark.sql import Row
-from pyspark.sql import functions
+# load the dataset
+file_path = 'combined_rapid_rail_data.csv'
+data = pd.read_csv(file_path)
 
-def parseInput1(line):
-    fields = line.split('|')
-    return Row(user_id = int(fields[0]), age = int(fields[1]), gender = fields[2], occupation = fields[3], zip = fields[4])
+# select relevant columns
+columns_to_keep = ['trip_id', 'stop_id', 'stop_name', 'stop_sequence']
+network_data = data[columns_to_keep]
 
-def parseInput2(line):
-    fields = line.split("\t")
-    return Row(user_id = int(fields[0]), movie_id = int(fields[1]), rating = int(fields[2]), time = int(fields[3]))
+# sort data by trip_id and stop_sequence to ensure order for edge construction
+network_data = network_data.sort_values(by = ['trip_id', 'stop_sequence'])
 
-def parseInput3(line):
-    fields = line.split("|")
-    return Row(movie_id = int(fields[0]), title = fields[1], release_date = fields[2], video_release_date = fields[3], url = fields[4],
-    unknown = int(fields[5]), action = int(fields[6]), adventure = int(fields[7]), animation = int(fields[8]), children =int(fields[9]),
-    comedy = int(fields[10]), crime = int(fields[11]), documentary = int(fields[12]), drama = int(fields[13]), fantasy = int(fields[14]),
-    film_noir = int(fields[15]), horror = int(fields[16]), musical = int(fields[17]), mystery = int(fields[18]), romance = int(fields[19]),
-    sci_fi = int(fields[20]), thriller = int(fields[21]), war = int(fields[22]), western = int(fields[23]))
+# construct edges by pairing consecutive stations within the same trip
+edges = network_data.groupby('trip_id').apply(
+    lambda x: pd.DataFrame({
+        'from_stop_id': x['stop_id'].iloc[:-1].values,
+        'to_stop_id': x['stop_id'].iloc[1:].values,
+        'from_stop_name': x['stop_name'].iloc[:-1].values,
+        'to_stop_name': x['stop_name'].iloc[1:].values
+    })
+).reset_index(drop = True)
 
-if __name__ == "__main__":
-    #Create a SparkSession
-    spark = SparkSession.builder.appName("Assignment4").config("spark.cassandra.connection.host", "127.0.0.1").getOrCreate()
+# save the cleaned dataset
+output_file_path = 'C:/Users/kamar/Network_Science/network_analysis_data.csv'
+edges.to_csv(output_file_path, index = False)
+```
 
-    #Get the raw data
-    u_user = spark.sparkContext.textFile("hdfs:///user/maria_dev/kamarul/u.user")
-    u_data = spark.sparkContext.textFile("hdfs:///user/maria_dev/kamarul/u.data")
-    u_item = spark.sparkContext.textFile("hdfs:///user/maria_dev/kamarul/u.item")
+### 2. Determining the Vertices and Edges of the network ###
 
-    #Convert it to a RDD of Row objects
-    users = u_user.map(parseInput1)
-    ratings = u_data.map(parseInput2)
-    names = u_item.map(parseInput3)
+The vertices for this network is the name of the station and the edges is the stop sequence for each station. The visualization of the network are as below:
 
-    #Convert into a DataFrame
-    users_df = spark.createDataFrame(users)
-    ratings_df = spark.createDataFrame(ratings)
-    names_df = spark.createDataFrame(names)
+```
+import networkx as nx
+import matplotlib.pyplot as plt
 
-    #Write into Cassandra
-    users_df.write\
-        .format("org.apache.spark.sql.cassandra")\
-        .mode('append')\
-        .options(table="users", keyspace="movielens")\
-        .save()
+# create edges 
+edges = list(zip(data['from_stop_name'], data['to_stop_name']))
 
-    ratings_df.write\
-        .format("org.apache.spark.sql.cassandra")\
-        .mode('append')\
-        .options(table="ratings", keyspace="movielens")\
-        .save()
+# initialize the graph
+G = nx.DiGraph()
+G.add_edges_from(edges)
 
-    names_df.write\
-        .format("org.apache.spark.sql.cassandra")\
-        .mode('append')\
-        .options(table="names", keyspace="movielens")\
-        .save()
+# number of vertices and edges
+num_vertices = G.number_of_nodes()
+num_edges = G.number_of_edges()
 
-    #Read it back from Cassandra into a new DataFrame
-    readUsers = spark.read\
-    .format("org.apache.spark.sql.cassandra")\
-    .options(table="users", keyspace="movielens")\
-    .load()
+# visualize the graph
+plt.figure(figsize = (12, 8))
+pos = nx.spring_layout(G, k = 0.3)
+nx.draw(G, pos, with_labels = True, node_size = 500, font_size = 8, alpha = 0.7, arrowsize = 8)
+plt.title("Network Graph of Rapid Rail Stations")
+plt.show()
 
-    #Read it back from Cassandra into a new DataFrame
-    readRatings = spark.read\
-    .format("org.apache.spark.sql.cassandra")\
-    .options(table="ratings", keyspace="movielens")\
-    .load()
+num_vertices, num_edges
+```
 
-    #Read it back from Cassandra into a new DataFrame
-    readNames = spark.read\
-    .format("org.apache.spark.sql.cassandra")\
-    .options(table="names", keyspace="movielens")\
-    .load()
+### Number of Vertices = 142 ###
 
-    readUsers.createOrReplaceTempView("users")
-    readRatings.createOrReplaceTempView("ratings")
-    readNames.createOrReplaceTempView("names")
+### Number of Edges = 300 ###
 
-    # The average rating for each movie
-    avg_rating = spark.sql("""SELECT n.title, AVG(rating) AS avgRating  FROM ratings r
-                   JOIN names n ON r.movie_id = n.movie_id
-                   GROUP BY n.title""")
+### 3. Determining the Minimum Spanning Tree (MST) ###
 
-    print("Average Rating for each Movie")
-    avg_rating.show(10)
+To find the minimum spanning tree (MST), an undirected version of the network must be created as for MST analysis we need an undirected graph.
 
-    # The top ten movies with the highest average ratings.
-    top10_highest_avgrating = spark.sql("""SELECT n.title, AVG(rating) AS avgRating, COUNT(*) as rated_count
-                   FROM ratings r
-                   JOIN names n on r.movie_id = n.movie_id
-                   GROUP BY n.title
-                   HAVING rated_count > 10
-                   ORDER BY avgRating DESC""")
+### Creating Undirected Rail Network ###
 
-    print("Top 10 Movie with Highest Average Rating with More than 10 being Rated")
-    top10_highest_avgrating.show(10)
+```
+import networkx as nx
+import matplotlib.pyplot as plt
 
-    # Find the users who have rated at least 50 movies and identify their favourite movie genres
+# create edges 
+edges = list(zip(data['from_stop_name'], data['to_stop_name']))
 
-    # Extract user who have rated more than 50 movies
-    users_50 = spark.sql("""SELECT user_id, COUNT(movie_id) AS rated_count
-                FROM ratings
-                GROUP BY user_id
-                HAVING COUNT(movie_id) >= 50
-                ORDER BY user_id ASC""")
+# initialize the graph
+G = nx.Graph()
+G.add_edges_from(edges)
 
-    print("Table Users have Rated atleast 50 Movies")
-    users_50.show(10)
+# number of vertices and edges
+num_vertices = G.number_of_nodes()
+num_edges = G.number_of_edges()
 
-    # Create temporary table
-    users_50.createOrReplaceTempView("users_50")
+# visualize the graph
+plt.figure(figsize = (12, 8))
+pos = nx.spring_layout(G, k = 0.3)
+nx.draw(G, pos, with_labels = True, node_size = 500, font_size = 8, alpha = 0.7)
+plt.title("Network Graph of Rapid Rail Stations")
+plt.show()
 
-    # Identify ratings given by user for each genres
-    user_genre_ratings = spark.sql("""SELECT
-        r.user_id,
-        CASE
-            WHEN n.action = 1 THEN 'Action'
-            WHEN n.adventure = 1 THEN 'Adventure'
-            WHEN n.animation = 1 THEN 'Animation'
-            WHEN n.children = 1 THEN 'Children'
-            WHEN n.comedy = 1 THEN 'Comedy'
-            WHEN n.crime = 1 THEN 'Crime'
-            WHEN n.documentary = 1 THEN 'Documentary'
-            WHEN n.drama = 1 THEN 'Drama'
-            WHEN n.fantasy = 1 THEN 'Fantasy'
-            WHEN n.film_noir = 1 THEN 'Film-Noir'
-            WHEN n.horror = 1 THEN 'Horror'
-            WHEN n.musical = 1 THEN 'Musical'
-            WHEN n.mystery = 1 THEN 'Mystery'
-            WHEN n.romance = 1 THEN 'Romance'
-            WHEN n.sci_fi = 1 THEN 'Sci-Fi'
-            WHEN n.thriller = 1 THEN 'Thriller'
-            WHEN n.war = 1 THEN 'War'
-            WHEN n.western = 1 THEN 'Western'
-            ELSE 'Unknown'
-        END AS genre,
-        SUM(r.rating) AS total_rating
-    FROM ratings r
-    JOIN names n ON r.movie_id = n.movie_id
-    JOIN users_50 u ON r.user_id = u.user_id
-    GROUP BY r.user_id, genre
-    ORDER BY user_id ASC""")
+num_vertices, num_edges
+```
+### Visualizing the MST ###
 
-    #Create temporary table
-    user_genre_ratings.createOrReplaceTempView("user_genre_ratings")
+```
+mst = nx.minimum_spanning_tree(G)
 
-    # Favourite genre based on the highest amount of ratings given by user
-    fav_genre = spark.sql("""
-    SELECT user_id, genre, total_rating
-    FROM (
-        SELECT user_id, genre, total_rating,
-               ROW_NUMBER() OVER(PARTITION BY user_id ORDER BY total_rating DESC) AS row_num
-        FROM user_genre_ratings
-    ) AS ranked_genres
-    WHERE row_num = 1
-    ORDER BY user_id
-    """)
-    print("User's Favourite Genre")
-    fav_genre.show(10)
+# number of vertices and edges in the MST
+mst_num_vertices = mst.number_of_nodes()
+mst_num_edges = mst.number_of_edges()
 
-    # All users that is less than 20 years old
-    less_20 = spark.sql("SELECT * FROM users WHERE age < 20")
-    print("Users less than 20 years old")
-    less_20.show(10)
+# visualize the MST
+plt.figure(figsize = (12, 8))
+pos_mst = nx.spring_layout(mst, k = 0.3)
+nx.draw(mst, pos_mst, with_labels = True, node_size = 500, font_size = 8, alpha = 0.7)
+plt.title("Mininum Spanning Tree (MST) for Rapid Rail Stations Network")
+plt.show()
 
-    # All the users who have the occupation scientist and their age is between 30 and 40 years old
-    scientist = spark.sql("SELECT * FROM users WHERE occupation = 'scientist' AND age BETWEEN 30 AND 40")
-    print("Scientist and Age between 30 and 40")
-    scientist.show(10)
+mst_num_vertices, mst_num_edges
+```
 
-    # Display all tables
+### For this MST: ###
+
+Number of vertices: **142**
+
+Number of edges: **140**
+
+### The importance of MST to the rail network ###
+
+The MST provides a simplified version of the network that preserves essential connectivity with the minimum number of connection. Some of the importance of MST in this network are:
+
++ minimizes the number of edges needed to keep all the stations connected, representing the most efficient way to connect every station without redundant paths.
++ it maintains connectivity across all stations, ensuring there are no isolated parts which is essential for robust and accessible transit.
++ reduces the network to its most necessary components by making it easier to identify and address potential vulnerabilities such as heavily relied-upon stations or connections.
+
+
+### 4. Determine the shortest path of the rail network ###
+
+To visualize shortest paths across the entire network, we can compute shortest path trees from a sample station and display a few paths due to the size as follows:
+
+```
+# Create directed edges from `from_stop_name` to `to_stop_name` 
+edges_directed = list(zip(data['from_stop_name'], data['to_stop_name']))
+
+# Initialize the directed graph
+G_directed = nx.DiGraph()
+G_directed.add_edges_from(edges_directed)
+
+# Re-select the starting station
+starting_station = data['from_stop_name'].iloc[0]
+
+# Compute shortest paths from the starting station to all others in the directed graph
+shortest_paths_tree = nx.single_source_shortest_path(G_directed, starting_station)
+
+# Create a new graph to represent only the shortest paths from the starting station
+shortest_paths_graph = nx.DiGraph()
+for target_station, path in shortest_paths_tree.items():
+    # Add edges for each shortest path found from starting station to target station
+    path_edges = list(zip(path[:-1], path[1:]))
+    shortest_paths_graph.add_edges_from(path_edges)
+
+# Set up node color mapping: highlight the starting station with a unique color
+node_colors = ['lightblue' if node != starting_station else 'orange' for node in shortest_paths_graph.nodes()]
     
-    print("Average Rating for each Movie")
-    avg_rating.show(10)
-    print("Top 10 Movie with Highest Average Rating with More than 10 being Rated")
-    top10_highest_avgrating.show(10)
-    print("Table Users have Rated atleast 50 Movies")
-    users_50.show(10)
-    print("User's Favourite Genre")
-    fav_genre.show(10)
-    print("Users less than 20 years old")
-    less_20.show(10)
-    print("Scientist and Age between 30 and 40")
-    scientist.show(10)
-
-    #Stop spark session
-    spark.stop()
+# Visualize the shortest paths tree from the starting station
+plt.figure(figsize=(12, 8))
+pos_paths = nx.spring_layout(shortest_paths_graph, k=0.3)
+nx.draw(shortest_paths_graph, pos_paths, with_labels=True, node_size=500, font_size=8, alpha=0.7, arrowsize=8,
+       node_color = node_colors)
+plt.title(f"Shortest Paths Tree from Station '{starting_station}'")
+plt.show()
 ```
 
-## Output
+### 5. Determine the Clustering Coefficient of the rail network ###
 
-### Question 1: Average rating for each movie
-
-**Average Rating for each Movie**
+The clustering coefficient measures the degree to which vertices in the graph tend to cluster together.
 
 ```
-+--------------------+------------------+
-|               title|         avgRating|
-+--------------------+------------------+
-|       Psycho (1960)| 4.100418410041841|
-|   Annie Hall (1977)| 3.911111111111111|
-|Snow White and th...|3.7093023255813953|
-|Heavenly Creature...|3.6714285714285713|
-|         Cosi (1996)|               4.0|
-|Night of the Livi...|          3.421875|
-|When We Were King...| 4.045454545454546|
-| Three Wishes (1995)|3.2222222222222223|
-|    Fair Game (1995)|2.1818181818181817|
-| If Lucy Fell (1996)|2.7586206896551726|
-+--------------------+------------------+
-only showing top 10 rows
+clustering_coeff = nx.average_clustering(G)
+clustering_coeff
 ```
 
-### Question 2: Top ten movies with the highest average ratings
+The clustering coeffiecient of the network is **0.00**. This value suggest that there is little to no clustering within the network meaning that stations do not form tightly interconnected groups or triangles.
 
-**Top 10 Movie with Highest Average Rating with More than 10 being Rated**
+This result indicates that the rail network is more of a linear or tree-like structure with stations primarily connected in a sequential or branching manner rather than forming small, interconnected subgroups.
 
-```
-+--------------------+------------------+-----------+
-|               title|         avgRating|rated_count|
-+--------------------+------------------+-----------+
-|Close Shave, A (1...| 4.491071428571429|        112|
-|Schindler's List ...| 4.466442953020135|        298|
-|Wrong Trousers, T...| 4.466101694915254|        118|
-|   Casablanca (1942)|  4.45679012345679|        243|
-|Wallace & Gromit:...| 4.447761194029851|         67|
-|Shawshank Redempt...| 4.445229681978798|        283|
-|  Rear Window (1954)|4.3875598086124405|        209|
-|Usual Suspects, T...| 4.385767790262173|        267|
-|    Star Wars (1977)|4.3584905660377355|        583|
-| 12 Angry Men (1957)|             4.344|        125|
-+--------------------+------------------+-----------+
-only showing top 10 rows
-```
+### 6. Determine the Degree of Centrality of the rail network ##
 
-### Question 3: Users rated at least 50 movies and their favourite movie genres
-
-**Users have Rated atleast 50 Movies**
+Degree centrality gives an indication of the number of direct connections each vertex has.
 
 ```
-+-------+-----------+
-|user_id|rated_count|
-+-------+-----------+
-|      1|        272|
-|      2|         62|
-|      3|         54|
-|      5|        175|
-|      6|        211|
-|      7|        403|
-|      8|         59|
-|     10|        184|
-|     11|        181|
-|     12|         51|
-+-------+-----------+
-only showing top 10 rows
+degree_centrality = nx.degree_centrality(G_directed)
+
+# display top 5 stations with highest degree of centralities
+top_degree_centrality = dict(sorted(degree_centrality.items(), key = lambda item: item[1], reverse = True)[:5])
+
+top_degree_centrality
 ```
 
-**User's Favourite Genre**
+The top 5 stations with highest degree of centrality are:
+
++ Chan Sow Lin: 0.071
++ Titiwangsa: 0.071
++ Maluri: 0.057
++ Hang Tuah: 0.057
++ Masjid Jamek: 0.057
+
+This indicates that these 5 stations are important hubs within the rail network. High degree centrality often signifies a station's importance in facilitating passenger flow and providing connectivity to multiple other stations.
 
 ```
-+-------+------+------------+
-|user_id| genre|total_rating|
-+-------+------+------------+
-|      1| Drama|         297|
-|      2| Drama|         100|
-|      3|Action|          39|
-|      5|Action|         176|
-|      6| Drama|         292|
-|      7| Drama|         442|
-|      8|Action|         159|
-|     10| Drama|         259|
-|     11|Comedy|         223|
-|     12| Drama|          74|
-+-------+------+------------+
-only showing top 10 rows
+top_nodes = list(top_degree_centrality.keys())
+
+# Color mapping: orange for top nodes, light blue for others
+node_colors = ['orange' if node in top_nodes else 'lightblue' for node in G_directed.nodes()]
+
+# Visualize the graph, emphasizing top degree centrality nodes
+plt.figure(figsize=(12, 8))
+pos = nx.spring_layout(G_directed, k=0.3)
+nx.draw(G_directed, pos, with_labels=True, node_size=500, font_size=8, alpha=0.7, arrowsize=8, node_color=node_colors)
+plt.title("Network Visualization Highlighting Top Degree Centrality Stations")
+plt.show()
 ```
 
-### Question 4: Users with age that is less than 20 years old
+### 7. Determine the Closeness Centrality of the rail network ###
 
-**Users less than 20 years old**
-
-```
-+-------+---+------+----------+-----+
-|user_id|age|gender|occupation|  zip|
-+-------+---+------+----------+-----+
-|    609| 13|     F|   student|55106|
-|    621| 17|     M|   student|60402|
-|    887| 14|     F|   student|27249|
-|    270| 18|     F|   student|63119|
-|    761| 17|     M|   student|97302|
-|    258| 19|     F|   student|77801|
-|    367| 17|     M|   student|37411|
-|    206| 14|     F|   student|53115|
-|    462| 19|     F|   student|02918|
-|    550| 16|     F|   student|95453|
-+-------+---+------+----------+-----+
-only showing top 10 rows
-```
-
-### Question 5: Users with occupation "scientist" and age between 30 and 40 years old
-
-**Scientist and Age between 30 and 40**
+Closeness centrality measures how quickly a vertex can reach all other vertices in the network.
 
 ```
-+-------+---+------+----------+-----+
-|user_id|age|gender|occupation|  zip|
-+-------+---+------+----------+-----+
-|     71| 39|     M| scientist|98034|
-|    107| 39|     M| scientist|60466|
-|    918| 40|     M| scientist|70116|
-|    337| 37|     M| scientist|10522|
-|    554| 32|     M| scientist|62901|
-|     40| 38|     M| scientist|27514|
-|    874| 36|     M| scientist|37076|
-|    643| 39|     M| scientist|55122|
-|    543| 33|     M| scientist|95123|
-|    183| 33|     M| scientist|27708|
-+-------+---+------+----------+-----+
-only showing top 10 rows
+closeness_centrality = nx.closeness_centrality(G_directed)
+
+# dislplay top 5 stations with highest closeness centrality
+top_closeness_centrality = dict(sorted(closeness_centrality.items(), key = lambda item: item[1], reverse = True)[:5])
+
+top_closeness_centrality
 ```
+
+The top 5 stations with the highest closeness centrality are:
+
++ Tun Razak Exchange: 0.111
++ Bukit Bintang: 0.110
++ Chan Sow Lin: 0.108
++ Merdeka: 0.106
++ Pasar Seni: 0.106
+
+This indicates that stations with high closeness centrality can reach other stations more quickly on average. This indicates that these stations are centrally located within the network, making them efficient access points for passengers traveling across different parts of the rail system.
+
+```
+top_closeness_nodes = list(top_closeness_centrality.keys())
+
+# Color mapping: green for top closeness nodes, light blue for others
+node_colors = ['green' if node in top_closeness_nodes else 'lightblue' for node in G_directed.nodes()]
+
+# Visualize the graph, emphasizing top closeness centrality nodes
+plt.figure(figsize=(12, 8))
+pos = nx.spring_layout(G_directed, k=0.3)
+nx.draw(G_directed, pos, with_labels=True, node_size=500, font_size=8, alpha=0.7, arrowsize=8, node_color=node_colors)
+plt.title("Network Visualization Highlighting Top Closeness Centrality Stations")
+plt.show()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
